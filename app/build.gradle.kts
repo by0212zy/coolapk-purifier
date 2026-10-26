@@ -13,8 +13,12 @@ val signingProperties = Properties().apply {
 
 android {
     namespace = "io.github.yylsping.coolapkpurifier"
-    // libxposed service 102 publishes minCompileSdk 37. Runtime behavior stays
-    // pinned by targetSdk/minSdk below; this only exposes its compile symbols.
+    // API 37 ships only in the fractional platform form (android-37.0 / 37.2,
+    // Android 17), which AGP 9.1.1+ is the first version able to parse - AGP 8.x
+    // dies with "Failed to find target with hash string 'android-37'". This plain
+    // integer form resolves to the base platform (android-37.0) without pinning a
+    // minor level. libxposed service 102 also publishes minCompileSdk 37, so 37
+    // is required regardless. Runtime behaviour stays pinned by targetSdk/minSdk.
     compileSdk = 37
 
     defaultConfig {

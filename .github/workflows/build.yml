@@ -4,11 +4,16 @@ name: Build Module
 # installable artifact. A GitHub Release with the APK is created when a tag
 # matching v* is pushed.
 #
-# The module uses AGP 8.12 + compileSdk 37 + JDK 17. The `compatible` build
-# type is minified and debug-signed (installable on its own) so the pipeline
-# needs no release keystore. To publish a release-signed APK instead, drop a
-# PKCS12 keystore into signing-private/ locally or provide KEYSTORE_BASE64 /
-# KEY_ALIAS / KEY_PASSWORD / KEYSTORE_PASSWORD secrets and build `assembleRelease`.
+# The module uses AGP 9.1.1 + Gradle 9.3.1 + compileSdk 37 + JDK 17. AGP 9.1.1
+# is the minimum version that understands the fractional SDK platform format
+# (platforms;android-37.0) Google introduced for API 36+: those platforms carry
+# a dotted <api-level> (e.g. 37.0/37.2) that AGP 8.x's sdklib cannot parse, so
+# it fails with "Failed to find target with hash string 'android-37'".
+# The `compatible` build type is minified and debug-signed (installable on its
+# own) so the pipeline needs no release keystore. To publish a release-signed
+# APK instead, drop a PKCS12 keystore into signing-private/ locally or provide
+# KEYSTORE_BASE64 / KEY_ALIAS / KEY_PASSWORD / KEYSTORE_PASSWORD secrets and
+# build `assembleRelease`.
 
 on:
   push:
@@ -48,41 +53,12 @@ jobs:
           echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
           echo "$SDK/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
           yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses
-          "$SDK/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "build-tools;35.0.0"
-          # Android 16+ SDK platforms carry a minor suffix (e.g. android-37.2);
-          # bare "platforms;android-37" is no longer resolvable, so pick the
-          # newest 37.x available and fall back to 37.2 if the index is offline.
-          LATEST_37=$("$SDK/cmdline-tools/latest/bin/sdkmanager" --list 2>/dev/null \
-            | grep -oE 'platforms;android-37\.[0-9]+' | grep -v beta | sort -V | tail -1)
-          [ -z "$LATEST_37" ] && LATEST_37="platforms;android-37.2"
-          echo "Resolved platform: $LATEST_37"
-          "$SDK/cmdline-tools/latest/bin/sdkmanager" "$LATEST_37"
-          # AGP 8.x resolves compileSdk 37 to platforms/android-37. The new SDK
-          # publishes the platform as platforms;android-37.2 and, crucially, its
-          # package.xml ships <api-level>37.2</api-level> (a dotted value) plus
-          # <extension-level>/<base-extension> tags. AGP 8.12's PlatformTarget
-          # parser reads Integer.parseInt on <api-level>, so 37.2 fails to parse
-          # and the platform is never registered as API 37 -> "Failed to find
-          # target with hash string 'android-37'". Copy it into a real
-          # android-37 directory and rewrite both package.xml and
-          # source.properties to the classic integer-API format AGP 8.12 expects.
-          INSTALLED=$(ls "$SDK/platforms" | grep -E '^android-37(\.|$)' | head -1)
-          if [ -n "$INSTALLED" ] && [ ! -e "$SDK/platforms/android-37" ]; then
-            cp -a "$SDK/platforms/$INSTALLED" "$SDK/platforms/android-37"
-            DST="$SDK/platforms/android-37"
-            # package.xml: integer api-level, drop extension/base-extension tags, fix path.
-            # Match any 37.x minor so future platform patch levels keep building.
-            sed -i 's#<api-level>37\.[0-9]*</api-level>#<api-level>37</api-level>#' "$DST/package.xml"
-            sed -i 's#<extension-level>[0-9]*</extension-level>##' "$DST/package.xml"
-            sed -i 's#<base-extension>[^<]*</base-extension>##' "$DST/package.xml"
-            sed -i 's#path="platforms;android-37\.[0-9]*"#path="platforms;android-37"#' "$DST/package.xml"
-            # source.properties: integer ApiLevel, drop the new extension fields.
-            sed -i 's/^AndroidVersion\.ApiLevel=.*/AndroidVersion.ApiLevel=37/' "$DST/source.properties"
-            sed -i '/^AndroidVersion\.ExtensionLevel=/d' "$DST/source.properties"
-            sed -i '/^AndroidVersion\.IsBaseSdk=/d' "$DST/source.properties"
-            sed -i 's/^Platform\.Version=.*/Platform.Version=37/' "$DST/source.properties"
-            echo "Prepared platforms/android-37 (normalized from $INSTALLED)"
-          fi
+          # API 37 ships only in the fractional form (platforms;android-37.0).
+          # AGP 9.1.1 parses that format natively and compiles against it for
+          # compileSdk = 37, so no package.xml/source.properties rewriting is
+          # needed here (AGP 8.x needed a full metadata rewrite and still failed).
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" "build-tools;36.0.0" "platforms;android-37.0"
           echo "sdk.dir=$SDK" > local.properties
 
       - name: Cache Gradle
@@ -101,8 +77,11 @@ jobs:
       - name: Build compatible APK
         run: ./gradlew --no-daemon assembleCompatible
 
-      - name: Run unit tests (compatible)
-        run: ./gradlew --no-daemon testCompatibleUnitTest
+      # AGP 9.x only creates unit-test variants for debuggable build types, and
+      # the `compatible` variant sets isDebuggable=false, so the shared src/test
+      # suite runs under the debug variant (it is variant-independent).
+      - name: Run unit tests
+        run: ./gradlew --no-daemon :app:testDebugUnitTest
 
       - name: Upload APK artifact
         if: always()

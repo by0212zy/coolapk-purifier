@@ -1,0 +1,71 @@
+name: Sync Upstream
+
+# Keeps this fork in sync with yylsping/coolapk-purifier.
+#
+# Runs weekly and on manual dispatch. It fetches upstream, merges upstream/main
+# into a dated branch, and opens a PR against this fork's main. The PR is left
+# for a human to review/merge so fork-local changes (CI workflows, docs, any
+# profile edits) are never silently overwritten. If a merge conflict cannot be
+# auto-resolved, the job fails and the conflict is resolved manually on the
+# branch.
+
+on:
+  schedule:
+    - cron: "17 4 * * 1" # every Monday 04:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "sync-upstream[bot]"
+          git config user.email "sync-upstream[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote get-url upstream >/dev/null 2>&1 \
+            || git remote add upstream https://github.com/yylsping/coolapk-purifier.git
+          git remote set-url upstream https://github.com/yylsping/coolapk-purifier.git
+          git fetch upstream --tags
+
+      - name: Merge upstream into a dated branch
+        id: merge
+        run: |
+          BRANCH="sync-upstream-$(date +%Y%m%d)"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          git checkout -b "$BRANCH"
+          if ! git merge upstream/main --no-edit; then
+            git merge --abort || true
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+      - name: Push branch and open PR
+        if: steps.merge.outputs.conflict != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git push origin "$BRANCH"
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "Sync upstream/main ($(date +%Y-%m-%d))" \
+            --body "Automated merge of yylsping/coolapk-purifier@main into this fork. Review fork-local changes (CI, docs) before merging." \
+            || gh pr list --head "$BRANCH" --state open
+
+      - name: Report conflict
+        if: steps.merge.outputs.conflict == 'true'
+        run: |
+          echo "::error::Automatic upstream sync hit a merge conflict. Resolve it manually on branch $BRANCH (already pushed) before opening a PR."
+          git push origin "$BRANCH" || true

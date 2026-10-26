@@ -57,6 +57,13 @@ jobs:
           [ -z "$LATEST_37" ] && LATEST_37="platforms;android-37.2"
           echo "Resolved platform: $LATEST_37"
           "$SDK/cmdline-tools/latest/bin/sdkmanager" "$LATEST_37"
+          # AGP 8.x resolves compileSdk 37 to platforms/android-37, but the new
+          # SDK lays the platform out as platforms/android-37.0; bridge it.
+          INSTALLED=$(ls "$SDK/platforms" | grep -E '^android-37(\.|$)' | head -1)
+          if [ -n "$INSTALLED" ] && [ ! -e "$SDK/platforms/android-37" ]; then
+            ln -sfn "$SDK/platforms/$INSTALLED" "$SDK/platforms/android-37"
+            echo "Linked platforms/android-37 -> $INSTALLED"
+          fi
           echo "sdk.dir=$SDK" > local.properties
 
       - name: Cache Gradle

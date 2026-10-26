@@ -58,19 +58,30 @@ jobs:
           echo "Resolved platform: $LATEST_37"
           "$SDK/cmdline-tools/latest/bin/sdkmanager" "$LATEST_37"
           # AGP 8.x resolves compileSdk 37 to platforms/android-37. The new SDK
-          # lays the platform out as platforms/android-37.2 (minor suffix), but
-          # the real blocker is that its source.properties ships
-          # `AndroidVersion.ApiLevel=37.2` (a dotted value) which AGP 8.12's
-          # AndroidVersion parser cannot read as an integer, so the platform is
-          # never registered as API 37 ("Failed to find target with hash string
-          # 'android-37'"). Copy it into a real android-37 directory and
-          # normalize ApiLevel to a plain integer so AGP accepts it.
+          # publishes the platform as platforms;android-37.2 and, crucially, its
+          # package.xml ships <api-level>37.2</api-level> (a dotted value) plus
+          # <extension-level>/<base-extension> tags. AGP 8.12's PlatformTarget
+          # parser reads Integer.parseInt on <api-level>, so 37.2 fails to parse
+          # and the platform is never registered as API 37 -> "Failed to find
+          # target with hash string 'android-37'". Copy it into a real
+          # android-37 directory and rewrite both package.xml and
+          # source.properties to the classic integer-API format AGP 8.12 expects.
           INSTALLED=$(ls "$SDK/platforms" | grep -E '^android-37(\.|$)' | head -1)
           if [ -n "$INSTALLED" ] && [ ! -e "$SDK/platforms/android-37" ]; then
             cp -a "$SDK/platforms/$INSTALLED" "$SDK/platforms/android-37"
-            sed -i 's/^AndroidVersion\.ApiLevel=.*/AndroidVersion.ApiLevel=37/' \
-              "$SDK/platforms/android-37/source.properties"
-            echo "Prepared platforms/android-37 (ApiLevel normalized from $INSTALLED)"
+            DST="$SDK/platforms/android-37"
+            # package.xml: integer api-level, drop extension/base-extension tags, fix path.
+            # Match any 37.x minor so future platform patch levels keep building.
+            sed -i 's#<api-level>37\.[0-9]*</api-level>#<api-level>37</api-level>#' "$DST/package.xml"
+            sed -i 's#<extension-level>[0-9]*</extension-level>##' "$DST/package.xml"
+            sed -i 's#<base-extension>[^<]*</base-extension>##' "$DST/package.xml"
+            sed -i 's#path="platforms;android-37\.[0-9]*"#path="platforms;android-37"#' "$DST/package.xml"
+            # source.properties: integer ApiLevel, drop the new extension fields.
+            sed -i 's/^AndroidVersion\.ApiLevel=.*/AndroidVersion.ApiLevel=37/' "$DST/source.properties"
+            sed -i '/^AndroidVersion\.ExtensionLevel=/d' "$DST/source.properties"
+            sed -i '/^AndroidVersion\.IsBaseSdk=/d' "$DST/source.properties"
+            sed -i 's/^Platform\.Version=.*/Platform.Version=37/' "$DST/source.properties"
+            echo "Prepared platforms/android-37 (normalized from $INSTALLED)"
           fi
           echo "sdk.dir=$SDK" > local.properties
 

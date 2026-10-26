@@ -48,7 +48,15 @@ jobs:
           echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
           echo "$SDK/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
           yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses
-          "$SDK/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-37" "build-tools;35.0.0"
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "build-tools;35.0.0"
+          # Android 16+ SDK platforms carry a minor suffix (e.g. android-37.2);
+          # bare "platforms;android-37" is no longer resolvable, so pick the
+          # newest 37.x available and fall back to 37.2 if the index is offline.
+          LATEST_37=$("$SDK/cmdline-tools/latest/bin/sdkmanager" --list 2>/dev/null \
+            | grep -oE 'platforms;android-37\.[0-9]+' | grep -v beta | sort -V | tail -1)
+          [ -z "$LATEST_37" ] && LATEST_37="platforms;android-37.2"
+          echo "Resolved platform: $LATEST_37"
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" "$LATEST_37"
           echo "sdk.dir=$SDK" > local.properties
 
       - name: Cache Gradle
